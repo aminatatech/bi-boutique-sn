@@ -1,82 +1,121 @@
 import streamlit as st
 import pandas as pd
-# En 2026, on utilise le nouveau SDK unifié
 from google import genai 
 from PIL import Image
 import json
 import plotly.express as px
 import urllib.parse
 
-# --- 1. CONFIGURATION ---
+# --- 1. CONFIGURATION DU CLIENT ---
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
-    # Nouvelle syntaxe client pour le SDK 2026
+    # Utilisation du nouveau SDK unifié de 2026
     client = genai.Client(api_key=API_KEY)
     
-    # Utilisation du modèle de 2026 : Gemini 2.0 Flash (ou 2.5 selon ta dispo)
-    MODEL_NAME = "gemini-2.0-flash" 
+    # On utilise le 1.5-flash qui a des quotas gratuits plus généreux
+    MODEL_NAME = "gemini-1.5-flash" 
     
 except Exception as e:
-    st.error(f"Erreur de configuration SDK : {e}")
+    st.error(f"Erreur de configuration : {e}")
     st.stop()
 
-# --- 2. INTERFACE ---
-st.set_page_config(page_title="Scanner BI Pro | Aminata Tech", layout="wide")
-st.title("📈 Scanner BI Professionnel (v2026)")
-st.caption(f"Connecté au modèle : {MODEL_NAME}")
+# --- 2. CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="Scanner BI Pro | Aminata Tech", layout="wide", page_icon="📈")
 
-files = st.file_uploader("Photos du cahier de vente", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+st.markdown("""
+    <style>
+    [data-testid="stMetricValue"] { font-size: 1.8rem; color: #0047AB; font-weight: bold; }
+    .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; background-color: #0047AB; color: white; font-weight: bold; }
+    .main-header { font-size: 2.2rem; color: #1E3A8A; text-align: center; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 3. LOGIQUE D'EXTRACTION ---
+
+def extract_data(images):
+    all_data = []
+    prompt = """
+    Tu es un expert en BI et OCR. Analyse ce cahier de vente.
+    Extrais les données en JSON : [{"Date": "AAAA-MM-JJ", "Article": "...", "Prix": 0, "Quantite": 0}]
+    CONSIGNES :
+    1. Si la date est incomplète, essaie de déduire l'année 2026.
+    2. Déchiffre intelligemment l'écriture (ex: 'P' pour 'Pneu').
+    3. Ne retourne QUE le JSON brut.
+    """
+    for img_file in images:
+        img = Image.open(img_file)
+        try:
+            # Appel via le nouveau SDK
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=[prompt, img]
+            )
+            
+            text = response.text.strip()
+            # Nettoyage des balises markdown si présentes
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+            
+            data = json.loads(text)
+            all_data.extend(data if isinstance(data, list) else [data])
+        except Exception as e:
+            st.error(f"Erreur technique sur une image : {e}")
+    return pd.DataFrame(all_data)
+
+# --- 4. INTERFACE UTILISATEUR ---
+
+st.markdown("<h1 class='main-header'>📈 Scanner BI & Digitalisation</h1>", unsafe_allow_html=True)
+st.write("---")
+
+files = st.file_uploader("Importez vos photos de cahier", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
 
 if files:
-    if st.button("🚀 Lancer l'Analyse BI"):
-        all_data = []
-        with st.spinner("Analyse haute performance en cours..."):
-            for img_file in files:
-                img = Image.open(img_file)
-                
-                prompt = """
-                Analyse ce cahier de vente. Extrais les données en JSON : 
-                [{"Date": "...", "Article": "...", "Prix": 0, "Quantite": 0}]
-                Nettoie les dates au format AAAA-MM-JJ si possible.
-                Retourne uniquement le JSON.
-                """
-                
-                try:
-                    # Nouvelle méthode d'appel 2026
-                    response = client.models.generate_content(
-                        model=MODEL_NAME,
-                        contents=[prompt, img]
-                    )
-                    
-                    # Extraction et nettoyage du JSON
-                    text = response.text.strip()
-                    if "```json" in text:
-                        text = text.split("```json")[1].split("```")[0]
-                    elif "```" in text:
-                        text = text.split("```")[1].split("```")[0]
-                    
-                    data = json.loads(text)
-                    all_data.extend(data if isinstance(data, list) else [data])
-                    
-                except Exception as e:
-                    st.error(f"Erreur technique : {e}")
+    if "data_extracted" not in st.session_state:
+        if st.button("🚀 Lancer l'Analyse Intelligente"):
+            with st.spinner("Analyse en cours..."):
+                df_raw = extract_data(files)
+                if not df_raw.empty:
+                    # Ajout de lignes vides pour la saisie manuelle
+                    empty_rows = pd.DataFrame([{"Date": "", "Article": "", "Prix": 0, "Quantite": 0}] * 3)
+                    st.session_state.data_extracted = pd.concat([df_raw, empty_rows], ignore_index=True)
+                    st.rerun()
 
-            if all_data:
-                df = pd.DataFrame(all_data)
-                
-                # Nettoyage des types
-                df["Prix"] = pd.to_numeric(df["Prix"], errors='coerce').fillna(0)
-                df["Quantite"] = pd.to_numeric(df["Quantite"], errors='coerce').fillna(0)
-                df["Total"] = df["Prix"] * df["Quantite"]
-                
-                # Dashboard rapide
-                st.success("Données extraites avec succès !")
-                st.data_editor(df, use_container_width=True)
-                
-                ca_total = df["Total"].sum()
-                st.metric("Chiffre d'Affaires Total", f"{ca_total:,.0f} FCFA")
-                
-                # Partage WhatsApp
-                message = f"*📊 RAPPORT BI AMINATA TECH*\nCA Total : {ca_total:,.0f} FCFA"
-                wa_url = f"https://wa.me/?text={urllib.parse.quote(message)}"
-                st.markdown(f'[📲 Partager sur WhatsApp]({wa_url})')
+    if "data_extracted" in st.session_state:
+        st.subheader("📝 Validation des données")
+        df_edited = st.data_editor(st.session_state.data_extracted, num_rows="dynamic", use_container_width=True)
+        
+        if st.button("📊 Générer le Dashboard"):
+            df_final = df_edited.copy()
+            df_final["Prix"] = pd.to_numeric(df_final["Prix"], errors='coerce').fillna(0)
+            df_final["Quantite"] = pd.to_numeric(df_final["Quantite"], errors='coerce').fillna(0)
+            df_final["Total"] = df_final["Prix"] * df_final["Quantite"]
+            df_final = df_final[df_final["Article"] != ""]
+
+            # KPIs
+            ca_total = df_final["Total"].sum()
+            nb_v = len(df_final)
+            
+            st.write("---")
+            c1, c2 = st.columns(2)
+            c1.metric("Chiffre d'Affaires Total", f"{ca_total:,.0f} FCFA")
+            c2.metric("Nombre de Ventes", nb_v)
+
+            # Graphique
+            if "Date" in df_final.columns:
+                df_final["Date_DT"] = pd.to_datetime(df_final["Date"], errors='coerce')
+                df_time = df_final.groupby("Date_DT")["Total"].sum().reset_index()
+                fig = px.line(df_time, x="Date_DT", y="Total", title="Évolution des ventes", markers=True)
+                st.plotly_chart(fig, use_container_width=True)
+
+            # WhatsApp
+            msg = f"*📊 BILAN DE VENTES*\nTotal : {ca_total:,.0f} FCFA\n_Généré par Aminata Tech_"
+            wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
+            st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:10px; padding:10px; width:100%; cursor:pointer;">📲 Partager sur WhatsApp</button></a>', unsafe_allow_html=True)
+
+            if st.button("🔄 Nouveau Scan"):
+                del st.session_state.data_extracted
+                st.rerun()
+else:
+    st.info("👋 Bonjour ! Importez vos photos pour commencer la digitalisation.")
