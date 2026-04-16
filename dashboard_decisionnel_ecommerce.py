@@ -7,7 +7,7 @@ import time
 import plotly.express as px
 import urllib.parse
 
-# --- 1. CONFIGURATION DE L'IA (SÉCURISÉE) ---
+# --- 1. CONFIGURATION DE L'IA ---
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
@@ -15,8 +15,19 @@ except Exception as e:
     st.error("⚠️ Clé API manquante. Configurez 'GEMINI_API_KEY' dans les Secrets de Streamlit.")
     st.stop()
 
-# Utilisation du nom de modèle standard
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Configuration du modèle pour la robustesse (OCR difficile et stabilité API)
+generation_config = {
+    "temperature": 0.1,  # Très bas pour éviter que l'IA n'invente des chiffres
+    "top_p": 0.95,
+    "top_k": 64,
+    "max_output_tokens": 8192,
+}
+
+# Utilisation du nom de modèle standard (le plus compatible)
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    generation_config=generation_config
+)
 
 # --- 2. CONFIGURATION DE LA PAGE ---
 st.set_page_config(
@@ -25,7 +36,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Design personnalisé (CSS)
+# Style CSS pour l'ergonomie (Mobile-friendly)
 st.markdown("""
     <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; color: #0047AB; font-weight: bold; }
@@ -40,76 +51,83 @@ st.markdown("""
 # --- 3. FONCTIONS LOGIQUES ---
 
 def extract_from_cahier(images):
-    """Analyse les photos pour extraire les données et les dates."""
+    """Analyse les photos avec OCR renforcé pour images de basse qualité."""
     prompt = """
-    Tu es un expert en saisie de données et BI. Analyse ces photos de cahier.
-    Extrais les données sous forme de liste JSON uniquement.
-    Chaque objet doit avoir ces clés exactes : "Date", "Article", "Prix", "Quantite".
+    Tu es un expert en reconnaissance de caractères (OCR) et en comptabilité.
+    Analyse cette photo de cahier de vente, même si l'image est floue ou sombre.
     
-    CONSIGNES :
-    1. Capture la date telle qu'écrite (ex: "2 janv 2026", "02-06-25"). Si absente, laisse "".
-    2. Ignore les lignes vides ou raturées.
-    3. Sois précis sur les prix et les quantités.
-    4. Retourne UNIQUEMENT le JSON (pas de texte avant ou après).
+    INSTRUCTIONS :
+    1. Déchiffre intelligemment les écritures manuscrites (ex: 'Pn' -> 'Pneu', '5' vs 'S').
+    2. Extrais les données sous forme de liste JSON uniquement.
+    3. Clés requises : "Date", "Article", "Prix", "Quantite".
+    4. Si une date est absente, laisse "".
+    5. Ignore les lignes vides, les ratures et les gribouillis.
+    6. Retourne UNIQUEMENT le JSON brut sans balises Markdown.
     """
     all_data = []
     for img_file in images:
         img = Image.open(img_file)
         try:
+            # Envoi de l'image à Gemini
             response = model.generate_content([prompt, img])
-            # Nettoyage pour isoler le JSON si l'IA ajoute des balises
+            
+            # Nettoyage du texte reçu
             clean_text = response.text.replace('```json', '').replace('```', '').strip()
+            
+            # Tentative de lecture JSON
             data = json.loads(clean_text)
             if isinstance(data, list):
                 all_data.extend(data)
             else:
                 all_data.append(data)
         except Exception as e:
-            st.error(f"Erreur technique sur une image : {e}")
+            st.error(f"Erreur de lecture : {e}")
             continue
     return pd.DataFrame(all_data)
 
 def generate_wa_link(ca, top_art, count):
-    """Prépare le lien WhatsApp."""
-    message = f"*📊 RAPPORT DE VENTES BI*\n\n" \
+    """Génère le message WhatsApp pour le client/patron."""
+    message = f"*📊 RAPPORT BI - AMINATA TECH*\n\n" \
               f"💰 *CA Total :* {ca:,.0f} FCFA\n" \
               f"🏆 *Top Produit :* {top_art}\n" \
-              f"📦 *Nombre de lignes :* {count}\n\n" \
-              f"_Digitalisé par @aminatatech_"
+              f"📦 *Ventes enregistrées :* {count}\n\n" \
+              f"_Digitalisé avec succès par votre assistante BI_"
     return f"https://wa.me/?text={urllib.parse.quote(message)}"
 
-# --- 4. INTERFACE ---
+# --- 4. INTERFACE UTILISATEUR ---
 
-st.markdown("<h1 class='main-header'>📈 Scanner BI & Digitalisation</h1>", unsafe_allow_html=True)
+st.markdown("<h1 class='main-header'>📈 Digitalisation & BI Scanner</h1>", unsafe_allow_html=True)
 st.write("---")
 
-files = st.file_uploader("Flashez ou importez vos photos de cahier", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+# Importation des fichiers
+files = st.file_uploader("Flashez ou importez les photos du cahier", 
+                        type=["jpg", "png", "jpeg"], 
+                        accept_multiple_files=True)
 
 if files:
-    # ÉTAPE 1 : EXTRACTION
     if "data_extracted" not in st.session_state:
         if st.button("🚀 Lancer l'analyse intelligente"):
-            with st.spinner("L'IA déchiffre les écritures et les dates..."):
+            with st.spinner("L'IA analyse les écritures difficiles..."):
                 df_raw = extract_from_cahier(files)
                 if not df_raw.empty:
-                    # Ajout de 3 lignes vides pour permettre l'ajout manuel
+                    # Ajout de lignes vides pour la saisie manuelle
                     empty_rows = pd.DataFrame([{"Date": "", "Article": "", "Prix": 0, "Quantite": 0}] * 3)
                     st.session_state.data_extracted = pd.concat([df_raw, empty_rows], ignore_index=True)
                     st.rerun()
                 else:
-                    st.error("Aucune donnée n'a été trouvée. Vérifiez la qualité de la photo.")
+                    st.error("Désolé, l'IA n'a pu lire aucune donnée. Essayez une photo plus nette ou plus proche.")
 
-    # ÉTAPE 2 : VALIDATION ET NETTOYAGE
+    # Validation et Affichage
     if "data_extracted" in st.session_state:
         st.subheader("📝 1. Vérification & Nettoyage")
-        st.info("Corrigez les dates hétérogènes (ex: '2 janv' ou '02-06-25') directement dans le tableau.")
+        st.info("L'IA gère les dates (ex: '2 janv' ou '02-06-25'). Validez les données ci-dessous.")
         
         df_edited = st.data_editor(st.session_state.data_extracted, num_rows="dynamic", use_container_width=True)
         
-        if st.button("📊 Valider et Générer le Tableau de Bord"):
+        if st.button("📊 Générer le Dashboard Final"):
             df_final = df_edited.copy()
             
-            # Nettoyage magique des dates par Python
+            # Conversion intelligente des dates
             df_final['Date_Clean'] = pd.to_datetime(df_final['Date'], errors='coerce')
             
             # Nettoyage numérique
@@ -117,43 +135,40 @@ if files:
             df_final["Quantite"] = pd.to_numeric(df_final["Quantite"], errors='coerce').fillna(0)
             df_final["Total"] = df_final["Prix"] * df_final["Quantite"]
             
-            # On retire les lignes sans article
+            # Supprimer les lignes vides
             df_final = df_final[df_final["Article"] != ""]
 
-            # Calcul des KPIs
+            # Calcul des indicateurs
             ca_total = df_final["Total"].sum()
-            nb_ventes = len(df_final)
-            top_prod = df_final.groupby("Article")["Total"].sum().idxmax() if nb_ventes > 0 else "N/A"
+            nb_v = len(df_final)
+            top_p = df_final.groupby("Article")["Total"].sum().idxmax() if nb_v > 0 else "N/A"
 
-            # Affichage des KPIs
+            # Dashboard
             st.write("---")
             c1, c2, c3 = st.columns(3)
             c1.metric("Chiffre d'Affaires", f"{ca_total:,.0f} FCFA")
-            c2.metric("Nb de Ventes", nb_ventes)
-            c3.metric("Top Article", top_prod)
+            c2.metric("Lignes traitées", nb_v)
+            c3.metric("Meilleure vente", top_p)
 
-            # Analyse Temporelle
             st.write("---")
-            col_left, col_right = st.columns([2, 1])
+            col_l, col_r = st.columns([2, 1])
             
-            with col_left:
-                st.subheader("📉 Évolution temporelle")
+            with col_l:
                 if not df_final['Date_Clean'].dropna().empty:
                     df_time = df_final.groupby('Date_Clean')['Total'].sum().reset_index()
-                    fig_time = px.line(df_time, x='Date_Clean', y='Total', markers=True, 
-                                      title="CA par Date (format nettoyé)")
-                    st.plotly_chart(fig_time, use_container_width=True)
+                    fig = px.line(df_time, x='Date_Clean', y='Total', markers=True, 
+                                 title="Évolution du Chiffre d'Affaires")
+                    st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.warning("Pas assez de dates valides pour le graphique temporel.")
+                    st.warning("Aucune date valide trouvée pour le graphique.")
 
-            with col_right:
-                st.subheader("📲 Partage")
-                wa_url = generate_wa_link(ca_total, top_prod, nb_ventes)
-                st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:10px; padding:10px; width:100%; cursor:pointer;">Envoyer au Patron (WhatsApp)</button></a>', unsafe_allow_html=True)
+            with col_r:
+                wa_url = generate_wa_link(ca_total, top_p, nb_v)
+                st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:10px; padding:10px; width:100%; cursor:pointer;">📲 Partager le bilan (WhatsApp)</button></a>', unsafe_allow_html=True)
             
-            if st.button("🔄 Nouveau Scan"):
+            if st.button("🔄 Scanner de nouveau"):
                 del st.session_state.data_extracted
                 st.rerun()
 else:
-    st.info("👋 Bonjour ! Préparez vos photos de cahier pour commencer la digitalisation.")
-    st.image("https://img.icons8.com/illustrations/official/xl/maintenance.png", width=250)
+    st.info("👋 Bonjour ! Importez vos photos de cahier pour commencer.")
+    st.image("https://img.icons8.com/illustrations/official/xl/financial-growth.png", width=250)
