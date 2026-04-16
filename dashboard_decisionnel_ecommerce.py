@@ -5,143 +5,161 @@ from PIL import Image
 import json
 import time
 import plotly.express as px
-from fpdf import FPDF
 import urllib.parse
 
-# --- 1. CONFIGURATION DE L'IA (GEMINI 1.5 FLASH) ---
-# Conseil : Remplace par ta clé API récupérée sur https://aistudio.google.com/
-API_KEY = "VOTRE_CLE_API_ICI" 
-genai.configure(api_key=API_KEY)
+# --- 1. CONFIGURATION DE L'IA (SÉCURISÉE) ---
+# On récupère la clé depuis les Secrets de Streamlit Cloud pour ne pas l'exposer sur GitHub
+try:
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=API_KEY)
+except Exception as e:
+    st.error("⚠️ Clé API manquante. Veuillez la configurer dans les Secrets de Streamlit.")
+    st.stop()
+
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- 2. CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="Scanner BI Pro - Freelance Solution", page_icon="💰", layout="wide")
+st.set_page_config(
+    page_title="Scanner BI Pro | Aminata Tech", 
+    page_icon="💰", 
+    layout="wide"
+)
 
+# Style personnalisé
 st.markdown("""
     <style>
-    [data-testid="stMetricValue"] { font-size: 2rem; color: #0047AB; font-weight: bold; }
-    .stButton>button { width: 100%; border-radius: 10px; height: 3em; background-color: #0047AB; color: white; }
+    [data-testid="stMetricValue"] { font-size: 1.8rem; color: #0047AB; font-weight: bold; }
+    .stButton>button { 
+        width: 100%; 
+        border-radius: 10px; 
+        height: 3em; 
+        background-color: #0047AB; 
+        color: white;
+        font-weight: bold;
+    }
+    .main-header { font-size: 2.5rem; color: #1E3A8A; text-align: center; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 3. FONCTIONS LOGIQUES ---
 
 def extract_from_cahier(images):
-    """Utilise l'IA pour transformer des photos de cahier en données structurées JSON."""
+    """Transforme les photos en données JSON via Gemini."""
     prompt = """
-    Tu es un expert comptable. Analyse ces photos de cahier de vente.
-    Extrais les données sous forme de liste JSON UNIQUEMENT. 
+    Tu es un expert comptable spécialisé dans le commerce de détail. 
+    Analyse ces photos de cahier de vente manuscrit.
+    Extrais les données sous forme de liste JSON uniquement.
     Chaque objet doit avoir les clés exactes : "Article", "Prix", "Quantite".
-    Ignore les totaux manuscrits et les lignes raturées.
-    Exemple : [{"Article": "Pneu", "Prix": 25000, "Quantite": 2}]
+    Ignore les totaux en bas de page et les ratures. 
+    Sois précis sur les noms d'articles même s'ils sont abrégés.
+    Exemple de sortie : [{"Article": "Pneu 15 pouces", "Prix": 35000, "Quantite": 1}]
     """
     all_data = []
     for img_file in images:
         img = Image.open(img_file)
         try:
             response = model.generate_content([prompt, img])
-            # Nettoyage du texte pour ne garder que le JSON
+            # Nettoyage de la réponse IA pour isoler le JSON
             json_text = response.text.replace('```json', '').replace('```', '').strip()
             data = json.loads(json_text)
             all_data.extend(data)
         except Exception as e:
-            st.error(f"Erreur de lecture sur une page : {e}")
+            st.error(f"Erreur de lecture sur une image : {e}")
             continue
     return pd.DataFrame(all_data)
 
 def generate_wa_link(ca, top_art, count):
-    """Crée un lien WhatsApp pour envoyer le rapport au patron."""
-    message = f"*RAPPORT DE VENTES DU JOUR*\n\n" \
+    """Génère le lien de partage WhatsApp."""
+    message = f"*📊 RAPPORT DE VENTES DU JOUR*\n\n" \
               f"💰 *CA Total :* {ca:,.0f} FCFA\n" \
               f"🏆 *Top Produit :* {top_art}\n" \
               f"📦 *Nombre de ventes :* {count}\n\n" \
-              f"_Généré par votre Assistant BI Expert_"
+              f"_Généré par l'outil BI de @aminatatech_"
     return f"https://wa.me/?text={urllib.parse.quote(message)}"
 
 # --- 4. INTERFACE UTILISATEUR ---
 
-st.title("📈 Digitalisation & BI : Scanner de Cahier")
-st.write("Transformez vos photos de cahier en rapports professionnels instantanément.")
+st.markdown("<h1 class='main-header'>📈 Digitalisation & Business Intelligence</h1>", unsafe_allow_html=True)
+st.write("<p style='text-align: center;'>Transformez vos notes manuscrites en outils de décision stratégique.</p>", unsafe_allow_html=True)
 st.write("---")
 
 # Zone d'importation
-files = st.file_uploader("Flashez ou importez les photos de votre cahier", 
+files = st.file_uploader("Flashez ou importez les photos de vos ventes (Cahier)", 
                         type=["jpg", "png", "jpeg"], 
                         accept_multiple_files=True)
 
 if files:
     # ÉTAPE 1 : EXTRACTION IA
     if "data_extracted" not in st.session_state:
-        if st.button("🚀 Extraire les données des photos"):
-            with st.spinner("L'intelligence artificielle déchiffre votre cahier..."):
-                time.sleep(1) # Effet visuel
+        if st.button("🚀 Lancer l'analyse intelligente"):
+            with st.spinner("L'IA @aminatatech déchiffre votre cahier..."):
                 df_raw = extract_from_cahier(files)
                 if not df_raw.empty:
                     st.session_state.data_extracted = df_raw
                     st.rerun()
                 else:
-                    st.error("L'IA n'a pas pu lire de données. Vérifiez la netteté des photos.")
+                    st.error("Aucune donnée n'a pu être extraite. Assurez-vous que l'image est bien éclairée.")
 
     # ÉTAPE 2 : VALIDATION ET ÉDITION
     if "data_extracted" in st.session_state:
-        st.subheader("📝 Étape de Validation")
-        st.info("Corrigez les éventuelles erreurs de lecture de l'IA directement dans le tableau ci-dessous.")
+        st.subheader("📝 1. Vérifiez et validez les données")
+        st.info("Vous pouvez modifier le tableau ci-dessous si l'IA a fait une erreur sur un prix ou un nom.")
         
-        # Éditeur de données interactif
+        # Éditeur de données
         df_valid = st.data_editor(st.session_state.data_extracted, 
                                  num_rows="dynamic", 
                                  use_container_width=True)
         
-        if st.button("📊 Valider et Générer l'Analyse"):
+        if st.button("📊 Générer le Tableau de Bord Final"):
             st.write("---")
             
-            # Conversion numérique de sécurité
+            # Nettoyage numérique
             df_valid["Prix"] = pd.to_numeric(df_valid["Prix"], errors='coerce').fillna(0)
             df_valid["Quantite"] = pd.to_numeric(df_valid["Quantite"], errors='coerce').fillna(0)
             df_valid["Total"] = df_valid["Prix"] * df_valid["Quantite"]
             
-            # CALCULS KPIs
+            # Calculs des KPIs
             ca_total = df_valid["Total"].sum()
-            nb_lignes = len(df_valid)
-            top_prod = df_valid.groupby("Article")["Total"].sum().idxmax() if nb_lignes > 0 else "N/A"
+            nb_ventes = len(df_valid)
+            top_prod = df_valid.groupby("Article")["Total"].sum().idxmax() if nb_ventes > 0 else "N/A"
 
-            # AFFICHAGE KPIs
+            # Affichage des KPIs
             col1, col2, col3 = st.columns(3)
             col1.metric("Chiffre d'Affaires", f"{ca_total:,.0f} FCFA")
-            col2.metric("Lignes de Ventes", nb_lignes)
-            col3.metric("Top Article", top_prod)
+            col2.metric("Articles vendus", nb_ventes)
+            col3.metric("Meilleure Vente", top_prod)
 
-            # VISUALISATION
+            # Visualisation
             st.write("---")
+            st.subheader("🔍 Analyse visuelle")
             c_left, c_right = st.columns([2, 1])
             
             with c_left:
                 fig_bar = px.bar(df_valid, x="Article", y="Total", 
-                                 title="Volume de vente par Article",
-                                 color="Total", color_continuous_scale="Blues")
+                                title="Répartition du CA par article",
+                                color="Total", color_continuous_scale="Viridis")
                 st.plotly_chart(fig_bar, use_container_width=True)
             
             with c_right:
-                # Analyse narrative simplifiée
-                st.subheader("🧠 Analyse Expert")
+                st.subheader("💡 Conseil Expert")
                 if ca_total > 0:
                     part_top = (df_valid.groupby("Article")["Total"].sum().max() / ca_total) * 100
-                    st.write(f"Votre article **{top_prod}** représente **{part_top:.1f}%** de vos revenus actuels.")
+                    st.write(f"L'article **{top_prod}** génère **{part_top:.1f}%** de vos revenus.")
                     if part_top > 50:
-                        st.warning("⚠️ Attention : Forte dépendance à un seul produit.")
+                        st.warning("⚠️ Attention : Votre CA dépend énormément d'un seul article.")
                     else:
-                        st.success("✅ Votre mix produit est bien équilibré.")
+                        st.success("✅ Votre inventaire semble bien diversifié.")
 
-            # OPTIONS DE PARTAGE
+            # Options de partage
             st.write("---")
-            wa_url = generate_wa_link(ca_total, top_prod, nb_lignes)
-            st.markdown(f'<a href="{wa_url}" target="_blank" style="text-decoration:none;"><button style="background-color:#25D366; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer; width:100%;">📲 Partager le bilan sur WhatsApp au Patron</button></a>', unsafe_allow_html=True)
+            wa_url = generate_wa_link(ca_total, top_prod, nb_ventes)
+            st.markdown(f'<a href="{wa_url}" target="_blank" style="text-decoration:none;"><button style="background-color:#25D366; color:white; border:none; padding:12px; border-radius:8px; cursor:pointer; width:100%;">📲 Envoyer ce bilan au patron sur WhatsApp</button></a>', unsafe_allow_html=True)
             
-            if st.button("🔄 Scanner un nouveau cahier"):
+            if st.button("🔄 Scanner une nouvelle page"):
                 del st.session_state.data_extracted
                 st.rerun()
 
 else:
-    # Message d'accueil pro pour les clients
-    st.info("👋 Bienvenue ! Veuillez importer les photos de votre cahier de ventes pour commencer la digitalisation.")
-    st.image("https://img.icons8.com/illustrations/official/xl/business-analysis.png", width=300)
+    # Message d'attente
+    st.info("👋 Prête pour la démo ? Importez une photo de cahier de vente pour voir la magie.")
+    st.image("https://img.icons8.com/illustrations/official/xl/financial-growth.png", width=300)
