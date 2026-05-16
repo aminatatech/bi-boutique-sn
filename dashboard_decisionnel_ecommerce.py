@@ -1,28 +1,27 @@
 import streamlit as st
 import pandas as pd
-from google import genai 
+from groq import Groq  # <-- Changement : Utilisation du SDK Groq
 from PIL import Image
+import io
+import base64
 import json
 import plotly.express as px
 import urllib.parse
 
-# --- 1. CONFIGURATION DU CLIENT ---
+# --- 1. CONFIGURATION DU CLIENT GROQ ---
 try:
     # Récupération de la clé depuis les secrets de Streamlit
-    API_KEY = st.secrets["GEMINI_API_KEY"]
+    API_KEY = st.secrets["GROQ_API_KEY"]
     
-    # Création du client en forçant la version 'v1' pour éviter l'erreur 404/v1beta
-    client = genai.Client(
-        api_key=API_KEY,
-        http_options={'api_version': 'v1'}
-    )
+    # Création du client Groq
+    client = Groq(api_key=API_KEY)
     
-    # Modèle 1.5-flash : stable et quotas généreux
-    MODEL_NAME = "gemini-1.5-flash" 
+    # Modèle de vision de Groq (Llama 3.2 est idéal pour l'OCR et l'analyse d'images)
+    MODEL_NAME = "llama-3.2-11b-vision-preview" 
     
 except Exception as e:
     st.error(f"Erreur de configuration : {e}")
-    st.info("Vérifiez que vous avez ajouté GEMINI_API_KEY dans les Secrets de Streamlit.")
+    st.info("Vérifiez que vous avez ajouté GROQ_API_KEY dans les Secrets de Streamlit.")
     st.stop()
 
 # --- 2. CONFIGURATION DE LA PAGE ---
@@ -36,8 +35,15 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. FONCTION D'EXTRACTION ---
+# --- Fonction utilitaire pour encoder l'image pour Groq ---
+def encode_image_to_base64(img_file):
+    image = Image.open(img_file)
+    buffered = io.BytesIO()
+    # Conversion en JPEG pour optimiser l'envoi
+    image.convert("RGB").save(buffered, format="JPEG")
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
+# --- 3. FONCTION D'EXTRACTION (ADAPTÉE POUR GROQ) ---
 def extract_data(images):
     all_data = []
     prompt = """
@@ -48,30 +54,50 @@ def extract_data(images):
     2. Déchiffre l'écriture manuscrite avec soin.
     3. Ne retourne QUE le JSON brut.
     """
+    
     for img_file in images:
-        img = Image.open(img_file)
         try:
-            # Appel API via le nouveau SDK v1
-            response = client.models.generate_content(
+            # Encodage requis pour transmettre l'image à l'API Groq
+            base64_image = encode_image_to_base64(img_file)
+            
+            # Appel API via le SDK Groq
+            response = client.chat.completions.create(
                 model=MODEL_NAME,
-                contents=[prompt, img]
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                temperature=0.1  # Température basse pour une extraction stricte
             )
             
-            text = response.text.strip()
-            # Nettoyage automatique du Markdown JSON
+            text = response.choices[0].message.content.strip()
+            
+            # Nettoyage du Markdown JSON si présent
             if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
+                text = text.split("
+```json")[1].split("```")[0]
             elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
+                text = text.split("
+```")[1].split("```")[0]
             
             data = json.loads(text)
             all_data.extend(data if isinstance(data, list) else [data])
         except Exception as e:
             st.error(f"Erreur technique sur une image : {e}")
+            
     return pd.DataFrame(all_data)
 
 # --- 4. INTERFACE ---
-
 st.markdown("<h1 class='main-header'>📈 Scanner BI & Digitalisation</h1>", unsafe_allow_html=True)
 st.write("---")
 
@@ -80,7 +106,7 @@ files = st.file_uploader("Importez vos photos de cahier", type=["jpg", "png", "j
 if files:
     if "data_extracted" not in st.session_state:
         if st.button("🚀 Lancer l'Analyse"):
-            with st.spinner("L'IA déchiffre vos notes..."):
+            with st.spinner("L'IA Groq déchiffre vos notes à la vitesse de l'éclair..."):
                 df_raw = extract_data(files)
                 if not df_raw.empty:
                     # Ajout de lignes vides pour la flexibilité
