@@ -46,11 +46,10 @@ def encode_image_to_base64(img_file):
 def extract_data(images):
     all_data = []
     
-    prompt = "Tu es un transcripteur OCR strict. Recopie mot pour mot le texte sans rien inventer, ni modifier. " \
-             "Garde strictement l'ordre de colonnes suivant : 1. Date, 2. Article, 3. Prix, 4. Quantite. " \
-             "Format JSON : [{\"Date\": \"...\", \"Article\": \"...\", \"Prix\": \"...\", \"Quantite\": \"...\"}]. " \
-             "Si une colonne ou une ligne entière est vide sur l'image, tu dois obligatoirement l'inclure avec une chaîne vide \"\". " \
-             "Ne retourne aucun texte explicatif, uniquement le JSON."
+    prompt = "Tu es un scanner OCR purement factuel. Tu dois transcrire uniquement ce que tu vois, sans rien inventer, sans décaler les valeurs et sans remplir les cases vides. " \
+             "Pour chaque ligne visible sur le cahier, extrait exactement ces 4 champs dans cet ordre : Date, Article, Prix, Quantite. " \
+             "Si une information n'est pas écrite sur la ligne du cahier, laisse la valeur vide \"\". Ne décale pas le prix ou la quantité dans une autre colonne. " \
+             "Format JSON attendu : [{\"Date\": \"...\", \"Article\": \"...\", \"Prix\": \"...\", \"Quantite\": \"...\"}]"
     
     for img_file in images:
         try:
@@ -67,7 +66,7 @@ def extract_data(images):
                         ]
                     }
                 ],
-                temperature=0.0
+                temperature=0.0  # Verrouille toute créativité de l'IA
             )
             
             text = response.choices[0].message.content.strip()
@@ -81,10 +80,14 @@ def extract_data(images):
             lines = raw_json if isinstance(raw_json, list) else [raw_json]
             
             for line in lines:
+                # Création d'une structure de base totalement vide
                 structured_line = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
+                
+                # On applique uniquement ce que l'IA a vu, sans aucune tolérance au décalage
                 for key in structured_line.keys():
-                    if key in line and line[key] is not None:
+                    if key in line and line[key] is not None and str(line[key]).strip() != "":
                         structured_line[key] = str(line[key]).strip()
+                
                 all_data.append(structured_line)
                 
         except Exception as e:
@@ -102,6 +105,7 @@ st.markdown("<p class='sub-header'>Suivi en temps réel et OCR de vos cahiers de
 files = st.file_uploader("Déposez les photos de votre cahier de vente", type=["jpg", "png", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
 
 if files:
+    # --- SYSTÈME DE VÉRIFICATION DES DOUBLONS ---
     hashes = {}
     has_duplicate = False
     duplicate_names = []
@@ -126,6 +130,7 @@ if files:
             allow_proceed = False
             st.info("Veuillez retirer l'image en double ou recharger la page pour corriger.")
 
+    # --- AFFICHAGE DES MINIATURES HORIZONTALEMENT ---
     st.write("### Aperçu des documents importés")
     cols = st.columns(min(len(files), 6))
     for idx, f in enumerate(files):
@@ -135,6 +140,7 @@ if files:
             
     st.write("")
 
+    # --- PROCESSUS DE NUMÉRISATION ---
     if "data_extracted" not in st.session_state and allow_proceed:
         if st.button("Visualiser les données"):
             with st.spinner("Extraction et mise en structure des colonnes..."):
