@@ -4,7 +4,6 @@ from groq import Groq
 from PIL import Image
 import io
 import base64
-import json
 import plotly.express as px
 import urllib.parse
 import hashlib
@@ -42,15 +41,20 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION D'EXTRACTION AVEC STRUCTURATION FORCÉE ---
+# --- 3. FONCTION D'EXTRACTION PAR TUYAU STRICT (ALGORITHME PYTHON) ---
 def extract_data(images):
     all_data = []
     
-    prompt = "Tu es un scanner OCR purement factuel. Tu dois transcrire uniquement ce que tu vois, sans rien inventer, sans décaler les valeurs et sans remplir les cases vides. " \
-             "Pour chaque ligne visible sur le cahier, extrait exactement ces 4 champs dans cet ordre : Date, Article, Prix, Quantite. " \
-             "Si une information n'est pas écrite sur la ligne du cahier, laisse la valeur vide \"\". Ne décale pas le prix ou la quantité dans une autre colonne. " \
-             "Format JSON attendu : [{\"Date\": \"...\", \"Article\": \"...\", \"Prix\": \"...\", \"Quantite\": \"...\"}]"
-    
+    # On interdit le JSON à l'IA pour l'empêcher de réorganiser les clés. 
+    # On lui demande un format texte brut linéaire séparé par des '|'
+    prompt = "Transcris ce cahier de vente ligne par ligne. Ne génère aucun JSON, aucun texte d'introduction. " \
+             "Pour chaque ligne du tableau, écris STRICTEMENT le contenu sous cette forme exacte : " \
+             "Date | Article | Prix | Quantite\n" \
+             "CONSIGNES ABSOLUES :\n" \
+             "1. Si un élément est manquant sur la ligne (comme la date ou le prix), ne mets RIEN entre les séparateurs, laisse un espace vide. Exemple :  | Robe |  | 2\n" \
+             "2. Ne décale jamais un prix dans la colonne quantité ou un article dans la colonne date.\n" \
+             "3. Respecte mot pour mot l'ordre visuel des lignes."
+
     for img_file in images:
         try:
             base64_image = encode_image_to_base64(img_file)
@@ -66,30 +70,26 @@ def extract_data(images):
                         ]
                     }
                 ],
-                temperature=0.0  # Verrouille toute créativité de l'IA
+                temperature=0.0
             )
             
-            text = response.choices[0].message.content.strip()
+            raw_text = response.choices[0].message.content.strip()
             
-            start_idx = text.find("[")
-            end_idx = text.rfind("]")
-            if start_idx != -1 and end_idx != -1:
-                text = text[start_idx:end_idx + 1]
-            
-            raw_json = json.loads(text)
-            lines = raw_json if isinstance(raw_json, list) else [raw_json]
-            
-            for line in lines:
-                # Création d'une structure de base totalement vide
-                structured_line = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
-                
-                # On applique uniquement ce que l'IA a vu, sans aucune tolérance au décalage
-                for key in structured_line.keys():
-                    if key in line and line[key] is not None and str(line[key]).strip() != "":
-                        structured_line[key] = str(line[key]).strip()
-                
-                all_data.append(structured_line)
-                
+            # Découpage strict des lignes par Python
+            for line in raw_text.split("\n"):
+                if "|" in line:
+                    parts = [p.strip() for p in line.split("|")]
+                    
+                    # Sécurisation mathématique de la ligne à 4 colonnes fixes
+                    structured_line = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
+                    
+                    if len(parts) >= 1: structured_line["Date"] = parts[0]
+                    if len(parts) >= 2: structured_line["Article"] = parts[1]
+                    if len(parts) >= 3: structured_line["Prix"] = parts[2]
+                    if len(parts) >= 4: structured_line["Quantite"] = parts[3]
+                    
+                    all_data.append(structured_line)
+                    
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
             
@@ -105,7 +105,6 @@ st.markdown("<p class='sub-header'>Suivi en temps réel et OCR de vos cahiers de
 files = st.file_uploader("Déposez les photos de votre cahier de vente", type=["jpg", "png", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
 
 if files:
-    # --- SYSTÈME DE VÉRIFICATION DES DOUBLONS ---
     hashes = {}
     has_duplicate = False
     duplicate_names = []
@@ -130,7 +129,6 @@ if files:
             allow_proceed = False
             st.info("Veuillez retirer l'image en double ou recharger la page pour corriger.")
 
-    # --- AFFICHAGE DES MINIATURES HORIZONTALEMENT ---
     st.write("### Aperçu des documents importés")
     cols = st.columns(min(len(files), 6))
     for idx, f in enumerate(files):
@@ -140,7 +138,6 @@ if files:
             
     st.write("")
 
-    # --- PROCESSUS DE NUMÉRISATION ---
     if "data_extracted" not in st.session_state and allow_proceed:
         if st.button("Visualiser les données"):
             with st.spinner("Extraction et mise en structure des colonnes..."):
