@@ -17,7 +17,7 @@ try:
     client = Groq(api_key=API_KEY)
     
     # Modèle de vision de Groq (Llama 3.2 est idéal pour l'OCR d'images)
-    MODEL_NAME = "llama-3.2-11b-vision-preview" 
+    MODEL_NAME = "llama-3.2-90b-vision-preview" 
     
 except Exception as e:
     st.error(f"Erreur de configuration : {e}")
