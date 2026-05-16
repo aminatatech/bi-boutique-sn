@@ -41,19 +41,19 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION D'EXTRACTION PAR TUYAU STRICT (ALGORITHME PYTHON) ---
+# --- 3. FONCTION D'EXTRACTION AVEC CONTRÔLE DE VALIDITÉ ---
 def extract_data(images):
     all_data = []
     
-    # On interdit le JSON à l'IA pour l'empêcher de réorganiser les clés. 
-    # On lui demande un format texte brut linéaire séparé par des '|'
-    prompt = "Transcris ce cahier de vente ligne par ligne. Ne génère aucun JSON, aucun texte d'introduction. " \
-             "Pour chaque ligne du tableau, écris STRICTEMENT le contenu sous cette forme exacte : " \
+    prompt = "ÉTAPES CRITIQUES :\n" \
+             "1. Analyse l'image. Si l'image ne contient aucun tableau, aucune liste de ventes ou aucune note de commerce manuscrite/imprimée, réponds UNIQUEMENT et STRICTEMENT par le mot : ERREUR_AUCUN_TABLEAU\n" \
+             "2. Si c'est un cahier de vente, transcris-le de manière purement textuelle, ligne par ligne, de gauche à droite.\n" \
+             "Pour chaque ligne, sépare les colonnes par un caractère '|' en suivant RIGOUREUSEMENT cet ordre visuel exact du cahier : " \
              "Date | Article | Prix | Quantite\n" \
-             "CONSIGNES ABSOLUES :\n" \
-             "1. Si un élément est manquant sur la ligne (comme la date ou le prix), ne mets RIEN entre les séparateurs, laisse un espace vide. Exemple :  | Robe |  | 2\n" \
-             "2. Ne décale jamais un prix dans la colonne quantité ou un article dans la colonne date.\n" \
-             "3. Respecte mot pour mot l'ordre visuel des lignes."
+             "RÈGLES D'OR :\n" \
+             "- Ne saute aucune ligne.\n" \
+             "- Si la date est écrite au début de la ligne, mets-la impérativement avant la première barre '|'. Ne la fais pas disparaître.\n" \
+             "- Si une colonne est vide, laisse un espace vide entre les barres '|'. Ne décale JAMAIS les valeurs des autres colonnes vers la gauche ou la droite."
 
     for img_file in images:
         try:
@@ -75,14 +75,19 @@ def extract_data(images):
             
             raw_text = response.choices[0].message.content.strip()
             
-            # Découpage strict des lignes par Python
+            # Détection immédiate d'une image invalide
+            if "ERREUR_AUCUN_TABLEAU" in raw_text:
+                st.error(f"❌ L'image `{img_file.name}` ne contient aucun tableau ou note de vente détectable. Traitement interrompu pour ce fichier.")
+                continue
+            
+            # Découpage strict géré par Python
             for line in raw_text.split("\n"):
                 if "|" in line:
                     parts = [p.strip() for p in line.split("|")]
                     
-                    # Sécurisation mathématique de la ligne à 4 colonnes fixes
                     structured_line = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
                     
+                    # Remplissage par position absolue (anti-décalage)
                     if len(parts) >= 1: structured_line["Date"] = parts[0]
                     if len(parts) >= 2: structured_line["Article"] = parts[1]
                     if len(parts) >= 3: structured_line["Prix"] = parts[2]
@@ -140,7 +145,7 @@ if files:
 
     if "data_extracted" not in st.session_state and allow_proceed:
         if st.button("Visualiser les données"):
-            with st.spinner("Extraction et mise en structure des colonnes..."):
+            with st.spinner("Vérification de l'image et alignement des lignes..."):
                 df_raw = extract_data(files)
                 if not df_raw.empty:
                     st.session_state.data_extracted = df_raw
