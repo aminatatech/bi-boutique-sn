@@ -7,6 +7,7 @@ import base64
 import plotly.express as px
 import urllib.parse
 import hashlib
+import re
 
 # --- 1. CONFIGURATION DU CLIENT GROQ ---
 try:
@@ -41,19 +42,71 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION D'EXTRACTION AVEC CONTRÔLE DE VALIDITÉ ---
-def extract_data(images):
+# --- 3. PARSER PYTHON ROBUSTE ---
+def parse_raw_text_to_dataframe(raw_text):
     all_data = []
+    current_date = ""
     
-    prompt = "ÉTAPES CRITIQUES :\n" \
-             "1. Analyse l'image. Si l'image ne contient aucun tableau, aucune liste de ventes ou aucune note de commerce manuscrite/imprimée, réponds UNIQUEMENT et STRICTEMENT par le mot : ERREUR_AUCUN_TABLEAU\n" \
-             "2. Si c'est un cahier de vente, transcris-le de manière purement textuelle, ligne par ligne, de gauche à droite.\n" \
-             "Pour chaque ligne, sépare les colonnes par un caractère '|' en suivant RIGOUREUSEMENT cet ordre visuel exact du cahier : " \
-             "Date | Article | Prix | Quantite\n" \
-             "RÈGLES D'OR :\n" \
-             "- Ne saute aucune ligne.\n" \
-             "- Si la date est écrite au début de la ligne, mets-la impérativement avant la première barre '|'. Ne la fais pas disparaître.\n" \
-             "- Si une colonne est vide, laisse un espace vide entre les barres '|'. Ne décale JAMAIS les valeurs des autres colonnes vers la gauche ou la droite."
+    # Séparation stricte par ligne textuelle renvoyée
+    lines = raw_text.split("\n")
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Détection d'un format date standard (ex: 12/05, 12-05, 12/05/2026) au début de la ligne
+        date_match = re.match(r'^(\d{1,2}[/\.-]\d{1,2}(?[/\.-]\d{2,4})?)', line)
+        
+        if date_match:
+            current_date = date_match.group(1)
+            # On retire la date de la ligne pour ne pas polluer l'article
+            line = line[len(current_date):].strip()
+            # Nettoyage des caractères résiduels de séparation
+            line = re.sub(r'^[,\s\-\|]+', '', line)
+
+        # Extraction des blocs numériques (Prix et Quantité) à la fin de la ligne
+        # Recherche de deux ensembles de chiffres séparés par des espaces/caractères à la fin
+        numbers = re.findall(r'\b\d+\b', line)
+        
+        prix = ""
+        quantite = ""
+        article = line
+        
+        if len(numbers) >= 2:
+            quantite = numbers[-1]
+            prix = numbers[-2]
+            # L'article correspond à tout ce qui précède ces deux nombres
+            idx_prix = line.rfind(prix)
+            article = line[:idx_prix].strip()
+        elif len(numbers) == 1:
+            # Si un seul nombre, on suppose par défaut que c'est le prix, quantité vide
+            prix = numbers[0]
+            idx_prix = line.rfind(prix)
+            article = line[:idx_prix].strip()
+
+        # Nettoyage final de l'article
+        article = re.sub(r'[,\s\-\|]+$', '', article).strip()
+
+        if article or prix or quantite:
+            all_data.append({
+                "Date": current_date,
+                "Article": article,
+                "Prix": prix,
+                "Quantite": quantite
+            })
+            
+    return pd.DataFrame(all_data)
+
+# --- 4. FONCTION D'EXTRACTION DE TEXTE BRUT ---
+def extract_data(images):
+    final_df = pd.DataFrame()
+    
+    # Prompt de pure transcription, sans aucune demande de formatage complexe
+    prompt = "Tu es une photocopieuse textuelle. Transcris TOUT le texte écrit sur ce document, ligne par ligne, de gauche à droite. " \
+             "Ne cherche pas à créer un tableau, ne mets aucun symbole de séparation, ne génère pas de JSON. " \
+             "Si l'image ne contient aucun texte, aucune liste de vente ou aucun chiffre, écris uniquement : ERREUR_AUCUN_TABLEAU. " \
+             "Respecte scrupuleusement l'ordre d'affichage des lignes du haut vers le bas."
 
     for img_file in images:
         try:
@@ -75,35 +128,23 @@ def extract_data(images):
             
             raw_text = response.choices[0].message.content.strip()
             
-            # Détection immédiate d'une image invalide
             if "ERREUR_AUCUN_TABLEAU" in raw_text:
-                st.error(f"❌ L'image `{img_file.name}` ne contient aucun tableau ou note de vente détectable. Traitement interrompu pour ce fichier.")
+                st.error(f"❌ Document invalide : `{img_file.name}` ne contient aucune donnée de vente exploitable.")
                 continue
-            
-            # Découpage strict géré par Python
-            for line in raw_text.split("\n"):
-                if "|" in line:
-                    parts = [p.strip() for p in line.split("|")]
-                    
-                    structured_line = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
-                    
-                    # Remplissage par position absolue (anti-décalage)
-                    if len(parts) >= 1: structured_line["Date"] = parts[0]
-                    if len(parts) >= 2: structured_line["Article"] = parts[1]
-                    if len(parts) >= 3: structured_line["Prix"] = parts[2]
-                    if len(parts) >= 4: structured_line["Quantite"] = parts[3]
-                    
-                    all_data.append(structured_line)
+                
+            # On confie le texte brut au parser mathématique de Python
+            df_file = parse_raw_text_to_dataframe(raw_text)
+            if not df_file.empty:
+                final_df = pd.concat([final_df, df_file], ignore_index=True)
                     
         except Exception as e:
-            st.error(f"Erreur d'analyse : {e}")
+            st.error(f"Erreur lors du traitement de {img_file.name} : {e}")
             
-    df = pd.DataFrame(all_data)
-    if not df.empty:
-        df = df[["Date", "Article", "Prix", "Quantite"]]
-    return df
+    if not final_df.empty:
+        final_df = final_df[["Date", "Article", "Prix", "Quantite"]]
+    return final_df
 
-# --- 4. INTERFACE GRAPHIQUE ---
+# --- 5. INTERFACE GRAPHIQUE ---
 st.markdown("<h1 class='main-header'>Analyse & Digitalisation de Ventes</h1>", unsafe_allow_html=True)
 st.markdown("<p class='sub-header'>Suivi en temps réel et OCR de vos cahiers de commerce.</p>", unsafe_allow_html=True)
 
@@ -145,7 +186,7 @@ if files:
 
     if "data_extracted" not in st.session_state and allow_proceed:
         if st.button("Visualiser les données"):
-            with st.spinner("Vérification de l'image et alignement des lignes..."):
+            with st.spinner("Lecture brute du document et alignement par Python..."):
                 df_raw = extract_data(files)
                 if not df_raw.empty:
                     st.session_state.data_extracted = df_raw
