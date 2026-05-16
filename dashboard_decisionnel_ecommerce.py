@@ -16,8 +16,8 @@ try:
     # Création du client Groq
     client = Groq(api_key=API_KEY)
     
-    # Modèle de vision de Groq (pour l'OCR d'images)
-    MODEL_NAME = "llama-3.2-90b-text-preview" 
+    # Nouveau modèle de vision officiel de Groq (Llama 4 Scout)
+    MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct" 
     
 except Exception as e:
     st.error(f"Erreur de configuration : {e}")
@@ -35,7 +35,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- Fonction utilitaire pour encoder l'image en Base64 pour Groq ---
+# --- Fonction utilitaire pour encoder l'image en Base64 ---
 def encode_image_to_base64(img_file):
     image = Image.open(img_file)
     buffered = io.BytesIO()
@@ -46,7 +46,7 @@ def encode_image_to_base64(img_file):
 def extract_data(images):
     all_data = []
     
-    # Utilisation de guillemets simples pour éviter les conflits de bloc
+    # Prompt en ligne simple pour éviter les sauts de ligne conflictuels sur GitHub
     prompt = "Analyse cette photo de cahier de vente. Extrais les données en JSON strict au format suivant : " \
              "[{\"Date\": \"AAAA-MM-JJ\", \"Article\": \"...\", \"Prix\": 0, \"Quantite\": 0}]. " \
              "CONSIGNES : 1. Si l'année manque, utilise 2026. " \
@@ -78,14 +78,13 @@ def extract_data(images):
             
             text = response.choices[0].message.content.strip()
             
-            # --- NETTOYAGE 100% SÉCURISÉ POUR GITHUB ---
-            # On cherche la première ouverture de crochet et la dernière fermeture
+            # --- NETTOYAGE PAR CIBLE DE CROCHETS (Anti-SyntaxError) ---
             start_idx = text.find("[")
             end_idx = text.rfind("]")
             
             if start_idx != -1 and end_idx != -1:
                 text = text[start_idx:end_idx + 1]
-            # -------------------------------------------
+            # -----------------------------------------------------------
             
             data = json.loads(text)
             all_data.extend(data if isinstance(data, list) else [data])
@@ -103,7 +102,7 @@ files = st.file_uploader("Importez vos photos de cahier", type=["jpg", "png", "j
 if files:
     if "data_extracted" not in st.session_state:
         if st.button("🚀 Lancer l'Analyse"):
-            with st.spinner("L'IA Groq déchiffre vos notes à la vitesse de l'éclair..."):
+            with st.spinner("L'IA déchiffre vos notes à la vitesse de l'éclair..."):
                 df_raw = extract_data(files)
                 if not df_raw.empty:
                     empty_rows = pd.DataFrame([{"Date": "", "Article": "", "Prix": 0, "Quantite": 0}] * 3)
@@ -135,7 +134,7 @@ if files:
                 st.plotly_chart(fig, use_container_width=True)
 
             msg = f"*📊 BILAN DE VENTES*\nTotal : {ca_total:,.0f} FCFA"
-            wa_url = f"[https://wa.me/?text=](https://wa.me/?text=){urllib.parse.quote(msg)}"
+            wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
             st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:10px; padding:10px; width:100%; cursor:pointer;">📲 Partager par WhatsApp</button></a>', unsafe_allow_html=True)
 
             if st.button("🔄 Nouveau Scan"):
