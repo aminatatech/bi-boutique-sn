@@ -45,14 +45,13 @@ def encode_image_to_base64(img_file):
 # --- 3. FONCTION D'EXTRACTION ---
 def extract_data(images):
     all_data = []
-    prompt = """
-    Analyse cette photo de cahier de vente.
-    Extrais les données en JSON : [{"Date": "AAAA-MM-JJ", "Article": "...", "Prix": 0, "Quantite": 0}]
-    CONSIGNES :
-    1. Si l'année manque, utilise 2026.
-    2. Déchiffre l'écriture manuscrite avec soin.
-    3. Ne retourne QUE le JSON brut.
-    """
+    
+    # Utilisation de guillemets simples pour éviter les conflits de bloc
+    prompt = "Analyse cette photo de cahier de vente. Extrais les données en JSON strict au format suivant : " \
+             "[{\"Date\": \"AAAA-MM-JJ\", \"Article\": \"...\", \"Prix\": 0, \"Quantite\": 0}]. " \
+             "CONSIGNES : 1. Si l'année manque, utilise 2026. " \
+             "2. Déchiffre l'écriture manuscrite avec soin. " \
+             "3. Ne retourne QUE le JSON brut, aucun texte avant ou après."
     
     for img_file in images:
         try:
@@ -79,13 +78,14 @@ def extract_data(images):
             
             text = response.choices[0].message.content.strip()
             
-            # Nettoyage robuste du JSON (sans risque de SyntaxError)
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.endswith("
-```"):
-                text = text[:-3]
-            text = text.strip()
+            # --- NETTOYAGE 100% SÉCURISÉ POUR GITHUB ---
+            # On cherche la première ouverture de crochet et la dernière fermeture
+            start_idx = text.find("[")
+            end_idx = text.rfind("]")
+            
+            if start_idx != -1 and end_idx != -1:
+                text = text[start_idx:end_idx + 1]
+            # -------------------------------------------
             
             data = json.loads(text)
             all_data.extend(data if isinstance(data, list) else [data])
@@ -135,7 +135,7 @@ if files:
                 st.plotly_chart(fig, use_container_width=True)
 
             msg = f"*📊 BILAN DE VENTES*\nTotal : {ca_total:,.0f} FCFA"
-            wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
+            wa_url = f"[https://wa.me/?text=](https://wa.me/?text=){urllib.parse.quote(msg)}"
             st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:10px; padding:10px; width:100%; cursor:pointer;">📲 Partager par WhatsApp</button></a>', unsafe_allow_html=True)
 
             if st.button("🔄 Nouveau Scan"):
