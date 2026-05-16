@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from groq import Groq  # <-- Changement : Utilisation du SDK Groq
+from groq import Groq
 from PIL import Image
 import io
 import base64
@@ -10,13 +10,13 @@ import urllib.parse
 
 # --- 1. CONFIGURATION DU CLIENT GROQ ---
 try:
-    # Récupération de la clé depuis les secrets de Streamlit
+    # Récupération sécurisée de la clé depuis les secrets de Streamlit
     API_KEY = st.secrets["GROQ_API_KEY"]
     
     # Création du client Groq
     client = Groq(api_key=API_KEY)
     
-    # Modèle de vision de Groq (Llama 3.2 est idéal pour l'OCR et l'analyse d'images)
+    # Modèle de vision de Groq (Llama 3.2 est idéal pour l'OCR d'images)
     MODEL_NAME = "llama-3.2-11b-vision-preview" 
     
 except Exception as e:
@@ -35,15 +35,14 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- Fonction utilitaire pour encoder l'image pour Groq ---
+# --- Fonction utilitaire pour encoder l'image en Base64 pour Groq ---
 def encode_image_to_base64(img_file):
     image = Image.open(img_file)
     buffered = io.BytesIO()
-    # Conversion en JPEG pour optimiser l'envoi
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION D'EXTRACTION (ADAPTÉE POUR GROQ) ---
+# --- 3. FONCTION D'EXTRACTION ---
 def extract_data(images):
     all_data = []
     prompt = """
@@ -57,10 +56,8 @@ def extract_data(images):
     
     for img_file in images:
         try:
-            # Encodage requis pour transmettre l'image à l'API Groq
             base64_image = encode_image_to_base64(img_file)
             
-            # Appel API via le SDK Groq
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
@@ -77,18 +74,18 @@ def extract_data(images):
                         ]
                     }
                 ],
-                temperature=0.1  # Température basse pour une extraction stricte
+                temperature=0.1
             )
             
             text = response.choices[0].message.content.strip()
             
-            # Nettoyage du Markdown JSON si présent
-            if "```json" in text:
-                text = text.split("
-```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("
-```")[1].split("```")[0]
+            # Nettoyage robuste du JSON (sans risque de SyntaxError)
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.endswith("
+```"):
+                text = text[:-3]
+            text = text.strip()
             
             data = json.loads(text)
             all_data.extend(data if isinstance(data, list) else [data])
@@ -109,7 +106,6 @@ if files:
             with st.spinner("L'IA Groq déchiffre vos notes à la vitesse de l'éclair..."):
                 df_raw = extract_data(files)
                 if not df_raw.empty:
-                    # Ajout de lignes vides pour la flexibilité
                     empty_rows = pd.DataFrame([{"Date": "", "Article": "", "Prix": 0, "Quantite": 0}] * 3)
                     st.session_state.data_extracted = pd.concat([df_raw, empty_rows], ignore_index=True)
                     st.rerun()
@@ -132,14 +128,12 @@ if files:
             c1.metric("Chiffre d'Affaires", f"{ca_total:,.0f} FCFA")
             c2.metric("Lignes traitées", len(df_final))
 
-            # Graphique d'évolution
             if "Date" in df_final.columns:
                 df_final["Date_DT"] = pd.to_datetime(df_final["Date"], errors='coerce')
                 df_time = df_final.groupby("Date_DT")["Total"].sum().reset_index()
                 fig = px.line(df_time, x="Date_DT", y="Total", title="Ventes dans le temps", markers=True)
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Partage WhatsApp
             msg = f"*📊 BILAN DE VENTES*\nTotal : {ca_total:,.0f} FCFA"
             wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
             st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:10px; padding:10px; width:100%; cursor:pointer;">📲 Partager par WhatsApp</button></a>', unsafe_allow_html=True)
