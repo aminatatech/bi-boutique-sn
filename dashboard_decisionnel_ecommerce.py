@@ -150,4 +150,24 @@ if files:
             with st.spinner("Lecture brute du document et alignement par Python..."):
                 df_raw = extract_data(files)
                 if not df_raw.empty:
-                    st.
+                    st.session_state.data_extracted = df_raw
+                    st.rerun()
+
+    if "data_extracted" in st.session_state:
+        st.write("---")
+        st.subheader("📝 Données capturées (Ordre strict respecté)")
+        
+        df_edited = st.data_editor(st.session_state.data_extracted, num_rows="dynamic", use_container_width=True)
+        
+        if st.button("📊 Générer le Rapport BI"):
+            df_final = df_edited.copy()
+            df_final["Prix"] = pd.to_numeric(df_final["Prix"], errors='coerce').fillna(0)
+            df_final["Quantite"] = pd.to_numeric(df_final["Quantite"], errors='coerce').fillna(0)
+            df_final["Total"] = df_final["Prix"] * df_final["Quantite"]
+            
+            df_report = df_final[df_final["Article"].str.strip() != ""]
+            ca_total = df_report["Total"].sum()
+            
+            m1, m2 = st.columns(2)
+            with m1:
+                st.metric("Chiffre d'Affaires Global", f
