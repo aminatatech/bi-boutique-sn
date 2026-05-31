@@ -44,19 +44,26 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION SCANNEUSE ULTRA-ROBUSTE ---
+# --- 3. FONCTION SCANNEUSE ULTRA-ROBUSTE & PRÉCISE ---
 def extract_data(images):
     all_data = []
     
-    p1 = "Tu es un scanner de documents de commerce hautement fidèle. " \
-         "Si l'image ne contient aucun texte, aucune liste ou chiffre, " \
-         "réponds UNIQUEMENT par le mot : ERREUR_AUCUN_TABLEAU. " \
-         "Sinon, génère un tableau Markdown horizontal strict avec : " \
-         "| Date | Article | Prix | Quantite |\n"
+    # Directives rigides pour un alignement matriciel parfait, même sur les lignes coupées
+    p1 = "Tu es un scanner de tableau hautement précis et géométrique. " \
+         "Analyse la structure visuelle du document ligne par ligne de haut en bas. " \
+         "Tu dois générer un tableau Markdown horizontal strict avec EXACTEMENT " \
+         "la structure suivante : | Date | Article | Prix | Quantite |\n"
          
-    p2 = "RÈGLES :\n1. Analyse ligne par ligne de haut en bas sans fusionner.\n" \
-         "2. Recopie fidèlement sans corriger.\n" \
-         "3. Si vide, laisse blanc entre les |. Ne décale pas."
+    p2 = "CONSIGNES D'ALIGNEMENT ABSOLU :\n" \
+         "1. Compte et numérise CHAQUE ligne du tableau physique de l'image. " \
+         "Si une ligne en bas du document est coupée, tronquée ou s'il lui manque " \
+         "ses bordures, TU DOIS TOUT DE MÊME LA CRÉER et extraire le texte visible.\n" \
+         "2. INTERDICTION STRICTE de fusionner, de combiner ou de mélanger les données " \
+         "de deux lignes différentes. Une ligne manuscrite/imprimée = Une ligne Markdown.\n" \
+         "3. Si une information ou une colonne est illisible ou manquante sur une ligne " \
+         "(notamment la ligne coupée du bas), laisse la case vide entre les séparateurs '|'. " \
+         "Ne décale jamais les données d'une colonne vers une autre.\n" \
+         "Ne fais aucun commentaire, commence directement par le tableau Markdown."
          
     prompt = p1 + p2
 
