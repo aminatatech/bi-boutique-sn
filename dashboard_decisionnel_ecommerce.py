@@ -7,7 +7,6 @@ import base64
 import plotly.express as px
 import urllib.parse
 import hashlib
-import re
 
 # --- 1. CONFIGURATION DU CLIENT GROQ ---
 try:
@@ -42,69 +41,19 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. PARSER PYTHON ROBUSTE ---
-def parse_raw_text_to_dataframe(raw_text):
-    all_data = []
-    current_date = ""
-    
-    # Séparation stricte par ligne textuelle renvoyée
-    lines = raw_text.split("\n")
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        # CORRECTION DE LA COQUILLE ICI : Expression régulière propre pour détecter la date
-        date_match = re.match(r'^(\d{1,2}[/\.-]\d{1,2}(?:[/\.-]\d{2,4})?)', line)
-        
-        if date_match:
-            current_date = date_match.group(1)
-            # On retire la date de la ligne pour ne pas polluer l'article
-            line = line[len(current_date):].strip()
-            # Nettoyage des caractères résiduels de séparation
-            line = re.sub(r'^[,\s\-\|]+', '', line)
-
-        # Extraction des blocs numériques (Prix et Quantité) à la fin de la ligne
-        numbers = re.findall(r'\b\d+\b', line)
-        
-        prix = ""
-        quantite = ""
-        article = line
-        
-        if len(numbers) >= 2:
-            quantite = numbers[-1]
-            prix = numbers[-2]
-            # L'article correspond à tout ce qui précède ces deux nombres
-            idx_prix = line.rfind(prix)
-            article = line[:idx_prix].strip()
-        elif len(numbers) == 1:
-            # Si un seul nombre, on suppose par défaut que c'est le prix
-            prix = numbers[0]
-            idx_prix = line.rfind(prix)
-            article = line[:idx_prix].strip()
-
-        # Nettoyage final de l'article
-        article = re.sub(r'[,\s\-\|]+$', '', article).strip()
-
-        if article or prix or quantite:
-            all_data.append({
-                "Date": current_date,
-                "Article": article,
-                "Prix": prix,
-                "Quantite": quantite
-            })
-            
-    return pd.DataFrame(all_data)
-
-# --- 4. FONCTION D'EXTRACTION DE TEXTE BRUT ---
+# --- 3. FONCTION SCANNREUSE GÉOMÉTRIQUE STRICTE ---
 def extract_data(images):
     final_df = pd.DataFrame()
     
-    prompt = "Tu es une photocopieuse textuelle. Transcris TOUT le texte écrit sur ce document, ligne par ligne, de gauche à droite. " \
-             "Ne cherche pas à créer un tableau, ne mets aucun symbole de séparation, ne génère pas de JSON. " \
-             "Si l'image ne contient aucun texte, aucune liste de vente ou aucun chiffre, écris uniquement : ERREUR_AUCUN_TABLEAU. " \
-             "Respecte scrupuleusement l'ordre d'affichage des lignes du haut vers le bas."
+    # On force l'IA à agir comme un scanner matriciel en utilisant le format Markdown standard
+    prompt = "Tu es un scanner de documents de commerce hautement fidèle. Tu dois numériser ce cahier de vente sous forme de tableau horizontal strict. " \
+             "Si l'image ne contient aucun texte, aucune liste de vente ou aucun chiffre, réponds UNIQUEMENT par le mot : ERREUR_AUCUN_TABLEAU. " \
+             "Sinon, génère un tableau Markdown contenant EXACTEMENT ces 4 colonnes dans cet ordre précis : | Date | Article | Prix | Quantite |\n" \
+             "CONSIGNES DE NUMÉRISATION RIGIDES :\n" \
+             "1. Analyse l'image ligne par ligne de haut en bas, sans sauter de ligne et sans regrouper de lignes entre elles.\n" \
+             "2. Recopie fidèlement ce que tu lis sans rien corriger ou adapter.\n" \
+             "3. Si une colonne ou une information est manquante ou vide sur une ligne de l'image originale, laisse la case vide entre les séparateurs verticaux. Ne décale pas les données des colonnes voisines.\n" \
+             "Ne donne aucune explication, génère uniquement le tableau Markdown commençant par '| Date | Article | Prix | Quantite |'."
 
     for img_file in images:
         try:
@@ -129,19 +78,36 @@ def extract_data(images):
             if "ERREUR_AUCUN_TABLEAU" in raw_text:
                 st.error(f"❌ Document invalide : `{img_file.name}` ne contient aucune donnée de vente exploitable.")
                 continue
+            
+            # Recherche du début du tableau Markdown pour s'isoler des bruits de texte
+            start_table = raw_text.find("|")
+            if start_table != -1:
+                raw_text = raw_text[start_table:]
                 
-            df_file = parse_raw_text_to_dataframe(raw_text)
+            # Lecture instantanée de la matrice par Pandas (Scanneuse)
+            df_file = pd.read_csv(io.StringIO(raw_text), sep="|", skipinitialspace=True).dropna(how='all')
+            
+            # Nettoyage des colonnes vides générées aux extrémités par le format Markdown
+            df_file = df_file.loc[:, ~df_file.columns.str.contains('^Unnamed')]
+            df_file.columns = [c.strip() for c in df_file.columns]
+            
             if not df_file.empty:
                 final_df = pd.concat([final_df, df_file], ignore_index=True)
                     
         except Exception as e:
             st.error(f"Erreur lors du traitement de {img_file.name} : {e}")
             
+    # Garantie finale de la structure des en-têtes
     if not final_df.empty:
-        final_df = final_df[["Date", "Article", "Prix", "Quantite"]]
+        for col in ["Date", "Article", "Prix", "Quantite"]:
+            if col not in final_df.columns:
+                final_df[col] = ""
+        final_df = final_df[["Date", "Article", "Prix", "Quantite"]].fillna("")
+        # Suppression de la ligne de séparation Markdown (----) si présente
+        final_df = final_df[~final_df["Article"].astype(str).str.contains(r'^[-:]+$')]
     return final_df
 
-# --- 5. INTERFACE GRAPHIQUE ---
+# --- 4. INTERFACE GRAPHIQUE ---
 st.markdown("<h1 class='main-header'>Analyse & Digitalisation de Ventes</h1>", unsafe_allow_html=True)
 st.markdown("<p class='sub-header'>Suivi en temps réel et OCR de vos cahiers de commerce.</p>", unsafe_allow_html=True)
 
