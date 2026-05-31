@@ -41,12 +41,11 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION SCANNREUSE GÉOMÉTRIQUE STRICTE ---
+# --- 3. FONCTION SCANNEUSE ULTRA-ROBUSTE (CORRIGÉE SANS PANDAS.READ_CSV) ---
 def extract_data(images):
-    final_df = pd.DataFrame()
+    all_data = []
     
-    # On force l'IA à agir comme un scanner matriciel en utilisant le format Markdown standard
-    prompt = "Tu es un scanner de documents de commerce hautement fidèle. Tu dois numériser ce cahier de vente sous forme de tableau horizontal strict. " \
+    prompt = "Tu es un scanner de documents de commerce hautement fidèle. Tu devez numériser ce cahier de vente sous forme de tableau horizontal strict. " \
              "Si l'image ne contient aucun texte, aucune liste de vente ou aucun chiffre, réponds UNIQUEMENT par le mot : ERREUR_AUCUN_TABLEAU. " \
              "Sinon, génère un tableau Markdown contenant EXACTEMENT ces 4 colonnes dans cet ordre précis : | Date | Article | Prix | Quantite |\n" \
              "CONSIGNES DE NUMÉRISATION RIGIDES :\n" \
@@ -79,33 +78,39 @@ def extract_data(images):
                 st.error(f"❌ Document invalide : `{img_file.name}` ne contient aucune donnée de vente exploitable.")
                 continue
             
-            # Recherche du début du tableau Markdown pour s'isoler des bruits de texte
-            start_table = raw_text.find("|")
-            if start_table != -1:
-                raw_text = raw_text[start_table:]
+            # Découpage ligne par ligne ultra-tolérant aux erreurs de colonnes
+            lines = raw_text.split("\n")
+            for line in lines:
+                line = line.strip()
+                # On ignore les entêtes du tableau Markdown et les lignes vides
+                if not line or "Date" in line or "---" in line or ":::" in line:
+                    continue
                 
-            # Lecture instantanée de la matrice par Pandas (Scanneuse)
-            df_file = pd.read_csv(io.StringIO(raw_text), sep="|", skipinitialspace=True).dropna(how='all')
-            
-            # Nettoyage des colonnes vides générées aux extrémités par le format Markdown
-            df_file = df_file.loc[:, ~df_file.columns.str.contains('^Unnamed')]
-            df_file.columns = [c.strip() for c in df_file.columns]
-            
-            if not df_file.empty:
-                final_df = pd.concat([final_df, df_file], ignore_index=True)
+                if line.startswith("|") and line.endswith("|"):
+                    # On découpe par la barre verticale et on nettoie les espaces
+                    parts = [p.strip() for p in line.split("|")]
+                    # Comme la ligne commence et finit par "|", parts[0] et parts[-1] sont vides.
+                    # Les vraies données se trouvent au milieu.
+                    actual_data = parts[1:-1]
+                    
+                    structured_line = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
+                    
+                    # On remplit selon la position trouvée, aucun plantage possible si trop de colonnes
+                    if len(actual_data) >= 1: structured_line["Date"] = actual_data[0]
+                    if len(actual_data) >= 2: structured_line["Article"] = actual_data[1]
+                    if len(actual_data) >= 3: structured_line["Prix"] = actual_data[2]
+                    if len(actual_data) >= 4: structured_line["Quantite"] = actual_data[3]
+                    
+                    all_data.append(structured_line)
                     
         except Exception as e:
             st.error(f"Erreur lors du traitement de {img_file.name} : {e}")
             
-    # Garantie finale de la structure des en-têtes
-    if not final_df.empty:
-        for col in ["Date", "Article", "Prix", "Quantite"]:
-            if col not in final_df.columns:
-                final_df[col] = ""
-        final_df = final_df[["Date", "Article", "Prix", "Quantite"]].fillna("")
-        # Suppression de la ligne de séparation Markdown (----) si présente
-        final_df = final_df[~final_df["Article"].astype(str).str.contains(r'^[-:]+$')]
-    return final_df
+    # Création propre du tableau de validation final
+    df = pd.DataFrame(all_data)
+    if not df.empty:
+        df = df[["Date", "Article", "Prix", "Quantite"]].fillna("")
+    return df
 
 # --- 4. INTERFACE GRAPHIQUE ---
 st.markdown("<h1 class='main-header'>Analyse & Digitalisation de Ventes</h1>", unsafe_allow_html=True)
@@ -143,53 +148,4 @@ if files:
     for idx, f in enumerate(files):
         with cols[idx % 6]:
             st.image(f, use_container_width=True)
-            st.caption(f.name[:15] + "..." if len(f.name) > 15 else f.name)
-            
-    st.write("")
-
-    if "data_extracted" not in st.session_state and allow_proceed:
-        if st.button("Visualiser les données"):
-            with st.spinner("Lecture brute du document et alignement par Python..."):
-                df_raw = extract_data(files)
-                if not df_raw.empty:
-                    st.session_state.data_extracted = df_raw
-                    st.rerun()
-
-    if "data_extracted" in st.session_state:
-        st.write("---")
-        st.subheader("📝 Données capturées (Ordre strict respecté)")
-        
-        df_edited = st.data_editor(st.session_state.data_extracted, num_rows="dynamic", use_container_width=True)
-        
-        if st.button("📊 Générer le Rapport BI"):
-            df_final = df_edited.copy()
-            df_final["Prix"] = pd.to_numeric(df_final["Prix"], errors='coerce').fillna(0)
-            df_final["Quantite"] = pd.to_numeric(df_final["Quantite"], errors='coerce').fillna(0)
-            df_final["Total"] = df_final["Prix"] * df_final["Quantite"]
-            
-            df_report = df_final[df_final["Article"].str.strip() != ""]
-            ca_total = df_report["Total"].sum()
-            
-            m1, m2 = st.columns(2)
-            with m1:
-                st.metric("Chiffre d'Affaires Global", f"{ca_total:,.0f} FCFA")
-            with m2:
-                st.metric("Lignes commercialisées", len(df_report))
-
-            if "Date" in df_report.columns and not df_report["Date"].empty:
-                df_report["Date_DT"] = pd.to_datetime(df_report["Date"], errors='coerce')
-                df_time = df_report.dropna(subset=["Date_DT"]).groupby("Date_DT")["Total"].sum().reset_index()
-                if not df_time.empty:
-                    fig = px.line(df_time, x="Date_DT", y="Total", title="Courbe de performance des ventes", markers=True, template="plotly_white")
-                    fig.update_traces(line_color='#2563EB')
-                    st.plotly_chart(fig, use_container_width=True)
-
-            msg = f"*📊 BILAN DE VENTES DIGITALISÉ*\nChiffre d'affaires : {ca_total:,.0f} FCFA"
-            wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-            st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#10B981; color:white; border:none; border-radius:8px; padding:12px; width:100%; cursor:pointer; font-weight:600;">📲 Transmettre le bilan sur WhatsApp</button></a>', unsafe_allow_html=True)
-
-            if st.button("🔄 Réinitialiser le scanner"):
-                del st.session_state.data_extracted
-                st.rerun()
-else:
-    st.info("Sélectionnez vos images pour démarrer l'importation.")
+            st.caption(f.name[:15] + "..." if len(f.name) >
