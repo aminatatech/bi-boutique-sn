@@ -150,3 +150,4 @@ if files:
             with st.spinner("Lecture brute du document et alignement par Python..."):
                 df_raw = extract_data(files)
                 if not df_raw.empty:
+                    st.
