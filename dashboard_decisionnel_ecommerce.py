@@ -141,7 +141,6 @@ if files:
     for idx, f in enumerate(files):
         with cols[idx % 6]:
             st.image(f, use_container_width=True)
-            # --- LIGNE CORRIGÉE ICI ---
             st.caption(f.name[:15] + "..." if len(f.name) > 15 else f.name)
             
     st.write("")
@@ -151,38 +150,3 @@ if files:
             with st.spinner("Lecture brute du document et alignement par Python..."):
                 df_raw = extract_data(files)
                 if not df_raw.empty:
-                    st.session_state.data_extracted = df_raw
-                    st.rerun()
-
-    if "data_extracted" in st.session_state:
-        st.write("---")
-        st.subheader("📝 Données capturées (Ordre strict respecté)")
-        
-        df_edited = st.data_editor(st.session_state.data_extracted, num_rows="dynamic", use_container_width=True)
-        
-        if st.button("📊 Générer le Rapport BI"):
-            df_final = df_edited.copy()
-            df_final["Prix"] = pd.to_numeric(df_final["Prix"], errors='coerce').fillna(0)
-            df_final["Quantite"] = pd.to_numeric(df_final["Quantite"], errors='coerce').fillna(0)
-            df_final["Total"] = df_final["Prix"] * df_final["Quantite"]
-            
-            df_report = df_final[df_final["Article"].str.strip() != ""]
-            ca_total = df_report["Total"].sum()
-            
-            m1, m2 = st.columns(2)
-            with m1:
-                st.metric("Chiffre d'Affaires Global", f"{ca_total:,.0f} FCFA")
-            with m2:
-                st.metric("Lignes commercialisées", len(df_report))
-
-            if "Date" in df_report.columns and not df_report["Date"].empty:
-                df_report["Date_DT"] = pd.to_datetime(df_report["Date"], errors='coerce')
-                df_time = df_report.dropna(subset=["Date_DT"]).groupby("Date_DT")["Total"].sum().reset_index()
-                if not df_time.empty:
-                    fig = px.line(df_time, x="Date_DT", y="Total", title="Courbe de performance des ventes", markers=True, template="plotly_white")
-                    fig.update_traces(line_color='#2563EB')
-                    st.plotly_chart(fig, use_container_width=True)
-
-            msg = f"*📊 BILAN DE VENTES DIGITALISÉ*\nChiffre d'affaires : {ca_total:,.0f} FCFA"
-            wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-            st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#10B981; color:white; border:none; border-radius:
