@@ -55,8 +55,8 @@ def parse_raw_text_to_dataframe(raw_text):
         if not line:
             continue
             
-        # Détection d'un format date standard (ex: 12/05, 12-05, 12/05/2026) au début de la ligne
-        date_match = re.match(r'^(\d{1,2}[/\.-]\d{1,2}(?[/\.-]\d{2,4})?)', line)
+        # CORRECTION DE LA COQUILLE ICI : Expression régulière propre pour détecter la date
+        date_match = re.match(r'^(\d{1,2}[/\.-]\d{1,2}(?:[/\.-]\d{2,4})?)', line)
         
         if date_match:
             current_date = date_match.group(1)
@@ -66,7 +66,6 @@ def parse_raw_text_to_dataframe(raw_text):
             line = re.sub(r'^[,\s\-\|]+', '', line)
 
         # Extraction des blocs numériques (Prix et Quantité) à la fin de la ligne
-        # Recherche de deux ensembles de chiffres séparés par des espaces/caractères à la fin
         numbers = re.findall(r'\b\d+\b', line)
         
         prix = ""
@@ -80,7 +79,7 @@ def parse_raw_text_to_dataframe(raw_text):
             idx_prix = line.rfind(prix)
             article = line[:idx_prix].strip()
         elif len(numbers) == 1:
-            # Si un seul nombre, on suppose par défaut que c'est le prix, quantité vide
+            # Si un seul nombre, on suppose par défaut que c'est le prix
             prix = numbers[0]
             idx_prix = line.rfind(prix)
             article = line[:idx_prix].strip()
@@ -102,7 +101,6 @@ def parse_raw_text_to_dataframe(raw_text):
 def extract_data(images):
     final_df = pd.DataFrame()
     
-    # Prompt de pure transcription, sans aucune demande de formatage complexe
     prompt = "Tu es une photocopieuse textuelle. Transcris TOUT le texte écrit sur ce document, ligne par ligne, de gauche à droite. " \
              "Ne cherche pas à créer un tableau, ne mets aucun symbole de séparation, ne génère pas de JSON. " \
              "Si l'image ne contient aucun texte, aucune liste de vente ou aucun chiffre, écris uniquement : ERREUR_AUCUN_TABLEAU. " \
@@ -132,7 +130,6 @@ def extract_data(images):
                 st.error(f"❌ Document invalide : `{img_file.name}` ne contient aucune donnée de vente exploitable.")
                 continue
                 
-            # On confie le texte brut au parser mathématique de Python
             df_file = parse_raw_text_to_dataframe(raw_text)
             if not df_file.empty:
                 final_df = pd.concat([final_df, df_file], ignore_index=True)
