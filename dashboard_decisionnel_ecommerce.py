@@ -44,28 +44,30 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION SCANNEUSE ULTRA-ROBUSTE PAR BALISES CLÉS ---
+# --- 3. FONCTION SCANNEUSE ULTRA-ROBUSTE PAR CIBLAGE SPATIAL NUMÉROTÉ ---
 def extract_data(images):
     all_data = []
     
-    # On utilise un format clé-valeur strict. L'IA ne peut plus décaler les colonnes.
+    # Intégration d'un index de ligne obligatoire pour fixer l'attention géométrique de l'IA
     p1 = "Tu es une photocopieuse textuelle géométrique de documents de commerce. " \
-         "Analyse le document ligne par ligne de haut en bas (y compris la dernière ligne coupée du bas).\n" \
-         "Pour CHAQUE ligne physique détectée sur l'image, tu dois retranscrire EXACTEMENT ce que tu lis " \
-         "en respectant scrupuleusement ce format clé/valeur :\n" \
-         "LIGNE:\n" \
-         "Date: [Ce qui est écrit dans la colonne Date]\n" \
-         "Article: [Ce qui est écrit dans la colonne Article]\n" \
-         "Prix: [Ce qui est écrit dans la colonne Prix]\n" \
-         "Quantite: [Ce qui est écrit dans la colonne Quantite]\n"
+         "Analyse le document de haut en bas et repère chaque ligne physique. " \
+         "Attribue un numéro séquentiel unique à chaque ligne pour ne pas les mélanger.\n" \
+         "Pour CHAQUE ligne détectée (même celle coupée tout en bas), tu dois générer " \
+         "EXACTEMENT ce bloc textuel :\n" \
+         "LIGNE NUMERO: [Mettre le numéro ici]\n" \
+         "Date: [Texte de la colonne Date]\n" \
+         "Article: [Texte de la colonne Article]\n" \
+         "Prix: [Texte de la colonne Prix]\n" \
+         "Quantite: [Texte de la colonne Quantite]\n"
          
-    p2 = "CONSIGNES ABSOLUES DE NUMÉRISATION :\n" \
-         "1. Tu ne dois RIEN inventer, RIEN corriger, et ne JAMAIS combiner les données de deux lignes distinctes.\n" \
-         "2. S'il s'agit de la dernière ligne en bas et qu'elle est coupée ou qu'il manque des informations " \
-         "(comme le prix ou la quantité), écris la balise correspondante mais laisse le champ totalement VIDE.\n" \
-         "3. Si une colonne est vide sur le cahier à n'importe quel niveau, laisse le champ VIDE après les deux-points. " \
-         "N'y déplace jamais la donnée d'une autre colonne.\n" \
-         "Ne fais aucune introduction, commence directement par la première ligne sous le format demandé."
+    p2 = "RÈGLES D'ANALYSE SPATIALE STRICTES :\n" \
+         "1. Évalue la position géométrique de la ligne sur l'image avant d'extraire. " \
+         "Ne confonds jamais et n'intervertis pas les cellules de deux lignes distinctes, " \
+         "même si elles ont toutes les deux des cases vides ou des bordures manquantes.\n" \
+         "2. Une ligne physique sur l'image = Un numéro de bloc unique. Reste synchrone.\n" \
+         "3. Si un champ est vide sur le cahier ou coupé en bas de l'image, laisse la valeur " \
+         "totalement VIDE après les deux-points. Ne recopie jamais la donnée de la ligne du dessus.\n" \
+         "Ne fais aucun commentaire, commence directement par 'LIGNE NUMERO: 1'."
          
     prompt = p1 + p2
 
@@ -93,7 +95,6 @@ def extract_data(images):
                 st.error(f"❌ Document invalide : `{img_file.name}`")
                 continue
             
-            # Découpage du bloc de texte par ligne
             lines = raw_text.split("\n")
             current_row = None
             
@@ -102,14 +103,13 @@ def extract_data(images):
                 if not line:
                     continue
                 
-                # Détection d'un nouveau bloc de ligne physique
-                if line.upper().startswith("LIGNE:"):
+                # Détection de l'identifiant de bloc unique spatialisé
+                if line.upper().startswith("LIGNE NUMERO:"):
                     if current_row is not None:
                         all_data.append(current_row)
                     current_row = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
                     continue
                 
-                # Extraction sécurisée par clé, aucun décalage possible
                 if current_row is not None:
                     if line.lower().startswith("date:"):
                         current_row["Date"] = line[5:].strip()
@@ -120,7 +120,6 @@ def extract_data(images):
                     elif line.lower().startswith("quantite:"):
                         current_row["Quantite"] = line[9:].strip()
             
-            # Ajout de la dernière ligne traitée
             if current_row is not None:
                 all_data.append(current_row)
                     
