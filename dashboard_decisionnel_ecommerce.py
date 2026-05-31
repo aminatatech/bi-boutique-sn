@@ -44,30 +44,24 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION SCANNEUSE ULTRA-ROBUSTE PAR CIBLAGE SPATIAL NUMÉROTÉ ---
+# --- 3. FONCTION SCANNEUSE COMPORTANT UN ANCRAGE PAR NUMÉROTATION EN TABLEAU ---
 def extract_data(images):
     all_data = []
     
-    # Intégration d'un index de ligne obligatoire pour fixer l'attention géométrique de l'IA
-    p1 = "Tu es une photocopieuse textuelle géométrique de documents de commerce. " \
-         "Analyse le document de haut en bas et repère chaque ligne physique. " \
-         "Attribue un numéro séquentiel unique à chaque ligne pour ne pas les mélanger.\n" \
-         "Pour CHAQUE ligne détectée (même celle coupée tout en bas), tu dois générer " \
-         "EXACTEMENT ce bloc textuel :\n" \
-         "LIGNE NUMERO: [Mettre le numéro ici]\n" \
-         "Date: [Texte de la colonne Date]\n" \
-         "Article: [Texte de la colonne Article]\n" \
-         "Prix: [Texte de la colonne Prix]\n" \
-         "Quantite: [Texte de la colonne Quantite]\n"
+    # On revient au Markdown pour la fidélité textuelle, mais avec un index géométrique obligatoire
+    p1 = "Tu es un scanner OCR de documents de commerce d'une précision absolue. " \
+         "Analyse l'image ligne par ligne de haut en bas et génère un tableau Markdown " \
+         "horizontal strict contenant EXACTEMENT ces 5 colonnes : " \
+         "| N° | Date | Article | Prix | Quantite |\n"
          
-    p2 = "RÈGLES D'ANALYSE SPATIALE STRICTES :\n" \
-         "1. Évalue la position géométrique de la ligne sur l'image avant d'extraire. " \
-         "Ne confonds jamais et n'intervertis pas les cellules de deux lignes distinctes, " \
-         "même si elles ont toutes les deux des cases vides ou des bordures manquantes.\n" \
-         "2. Une ligne physique sur l'image = Un numéro de bloc unique. Reste synchrone.\n" \
-         "3. Si un champ est vide sur le cahier ou coupé en bas de l'image, laisse la valeur " \
-         "totalement VIDE après les deux-points. Ne recopie jamais la donnée de la ligne du dessus.\n" \
-         "Ne fais aucun commentaire, commence directement par 'LIGNE NUMERO: 1'."
+    p2 = "DIRECTIVES DE COPIE RIGIDES :\n" \
+         "1. La colonne 'N°' doit contenir l'index de la ligne physique sur l'image (1, 2, 3...).\n" \
+         "2. Recopie le contenu textuel de chaque cellule avec une fidélité totale, sans rien reformuler.\n" \
+         "3. Tu dois générer une ligne Markdown pour CHAQUE ligne physique du cahier. Si la dernière ligne en bas " \
+         "est coupée ou s'il lui manque ses bordures, attribue-lui son numéro (ex: | 8 |) et extrais le texte visible. " \
+         "Laisse les cases vides si l'information est tronquée, mais ne fusionne JAMAIS deux lignes entre elles.\n" \
+         "4. Si une cellule est vide au milieu du tableau, laisse l'espace vide entre les '|'. Ne décale pas les données.\n" \
+         "Ne donne aucune explication, commence directement par l'en-tête du tableau Markdown."
          
     prompt = p1 + p2
 
@@ -96,133 +90,22 @@ def extract_data(images):
                 continue
             
             lines = raw_text.split("\n")
-            current_row = None
-            
             for line in lines:
                 line = line.strip()
-                if not line:
+                # On ignore les lignes de structure Markdown
+                if not line or "Article" in line or "---" in line or ":::" in line:
                     continue
                 
-                # Détection de l'identifiant de bloc unique spatialisé
-                if line.upper().startswith("LIGNE NUMERO:"):
-                    if current_row is not None:
-                        all_data.append(current_row)
-                    current_row = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
-                    continue
-                
-                if current_row is not None:
-                    if line.lower().startswith("date:"):
-                        current_row["Date"] = line[5:].strip()
-                    elif line.lower().startswith("article:"):
-                        current_row["Article"] = line[8:].strip()
-                    elif line.lower().startswith("prix:"):
-                        current_row["Prix"] = line[5:].strip()
-                    elif line.lower().startswith("quantite:"):
-                        current_row["Quantite"] = line[9:].strip()
-            
-            if current_row is not None:
-                all_data.append(current_row)
+                if line.startswith("|") and line.endswith("|"):
+                    parts = [p.strip() for p in line.split("|")]
+                    # parts[0] et parts[-1] sont vides à cause des pipes aux extrémités.
+                    # Le contenu réel est décalé de 1 à cause de la nouvelle colonne N°
+                    actual_data = parts[1:-1]
                     
-        except Exception as e:
-            st.error(f"Erreur traitement de {img_file.name} : {e}")
-            
-    df = pd.DataFrame(all_data)
-    if not df.empty:
-        df = df[["Date", "Article", "Prix", "Quantite"]].fillna("")
-    return df
-
-# --- 4. INTERFACE GRAPHIQUE ---
-st.markdown("<h1 class='main-header'>Analyse & Digitalisation Ventes</h1>", unsafe_allow_html=True)
-st.markdown("<p class='sub-header'>OCR de vos cahiers de commerce.</p>", unsafe_allow_html=True)
-
-files = st.file_uploader(
-    "Images", 
-    type=["jpg", "png", "jpeg"], 
-    accept_multiple_files=True, 
-    label_visibility="collapsed"
-)
-
-if files:
-    hashes = {}
-    has_duplicate = False
-    duplicate_names = []
-    
-    for f in files:
-        f_hash = calculate_image_hash(f)
-        if f_hash in hashes:
-            has_duplicate = True
-            duplicate_names.append((hashes[f_hash], f.name))
-        else:
-            hashes[f_hash] = f.name
-            
-    allow_proceed = True
-    if has_duplicate:
-        st.warning("⚠️ **Alerte Doublon Détectée**")
-        allow_proceed = False
-
-    st.write("### Aperçu des documents")
-    cols = st.columns(min(len(files), 6))
-    for idx, f in enumerate(files):
-        with cols[idx % 6]:
-            st.image(f, use_container_width=True)
-            short_name = f.name[:12] + "..." if len(f.name) > 12 else f.name
-            st.caption(short_name)
-            
-    st.write("")
-
-    if "data_extracted" not in st.session_state and allow_proceed:
-        if st.button("Visualiser les données"):
-            with st.spinner("Lecture brute en cours..."):
-                df_raw = extract_data(files)
-                if not df_raw.empty:
-                    st.session_state.data_extracted = df_raw
-                    st.rerun()
-
-    if "data_extracted" in st.session_state:
-        st.write("---")
-        st.subheader("📝 Données capturées (Ordre strict)")
-        
-        df_edited = st.data_editor(
-            st.session_state.data_extracted, 
-            num_rows="dynamic", 
-            use_container_width=True
-        )
-        
-        if st.button("📊 Générer le Rapport BI"):
-            df_final = df_edited.copy()
-            df_final["Prix"] = pd.to_numeric(df_final["Prix"], errors='coerce').fillna(0)
-            df_final["Quantite"] = pd.to_numeric(df_final["Quantite"], errors='coerce').fillna(0)
-            df_final["Total"] = df_final["Prix"] * df_final["Quantite"]
-            
-            df_report = df_final[df_final["Article"].str.strip() != ""]
-            ca_total = df_report["Total"].sum()
-            
-            m1, m2 = st.columns(2)
-            with m1:
-                val_ca = f"{ca_total:,.0f} FCFA"
-                st.metric("Chiffre d'Affaires Global", val_ca)
-            with m2:
-                st.metric("Lignes commercialisées", len(df_report))
-
-            if "Date" in df_report.columns and not df_report["Date"].empty:
-                df_report["Date_DT"] = pd.to_datetime(df_report["Date"], errors='coerce')
-                df_time = df_report.dropna(subset=["Date_DT"]).groupby("Date_DT")["Total"].sum().reset_index()
-                if not df_time.empty:
-                    fig = px.line(df_time, x="Date_DT", y="Total", template="plotly_white")
-                    st.plotly_chart(fig, use_container_width=True)
-
-            msg = f"*📊 BILAN DE VENTES*\nTotal : {ca_total:,.0f} FCFA"
-            wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-            
-            btn_html = f'<a href="{wa_url}" target="_blank">' \
-                       f'<button style="background-color:#10B981; color:white; ' \
-                       f'border:none; border-radius:8px; padding:12px; ' \
-                       f'width:100%; font-weight:600; cursor:pointer;">' \
-                       f'📲 Transmettre sur WhatsApp</button></a>'
-            st.markdown(btn_html, unsafe_allow_html=True)
-
-            if st.button("🔄 Réinitialiser"):
-                del st.session_state.data_extracted
-                st.rerun()
-else:
-    st.info("Sélectionnez vos images pour démarrer.")
+                    row = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
+                    
+                    # Remplissage par position relative à la colonne N° (actual_data[0] étant le N°)
+                    if len(actual_data) >= 2: row["Date"] = actual_data[1]
+                    if len(actual_data) >= 3: row["Article"] = actual_data[2]
+                    if len(actual_data) >= 4: row["Prix"] = actual_data[3]
+                    if len
