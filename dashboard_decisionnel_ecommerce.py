@@ -44,26 +44,28 @@ def encode_image_to_base64(img_file):
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- 3. FONCTION SCANNEUSE ULTRA-ROBUSTE & PRÉCISE ---
+# --- 3. FONCTION SCANNEUSE ULTRA-ROBUSTE PAR BALISES CLÉS ---
 def extract_data(images):
     all_data = []
     
-    # Directives rigides pour un alignement matriciel parfait, même sur les lignes coupées
-    p1 = "Tu es un scanner de tableau hautement précis et géométrique. " \
-         "Analyse la structure visuelle du document ligne par ligne de haut en bas. " \
-         "Tu dois générer un tableau Markdown horizontal strict avec EXACTEMENT " \
-         "la structure suivante : | Date | Article | Prix | Quantite |\n"
+    # On utilise un format clé-valeur strict. L'IA ne peut plus décaler les colonnes.
+    p1 = "Tu es une photocopieuse textuelle géométrique de documents de commerce. " \
+         "Analyse le document ligne par ligne de haut en bas (y compris la dernière ligne coupée du bas).\n" \
+         "Pour CHAQUE ligne physique détectée sur l'image, tu dois retranscrire EXACTEMENT ce que tu lis " \
+         "en respectant scrupuleusement ce format clé/valeur :\n" \
+         "LIGNE:\n" \
+         "Date: [Ce qui est écrit dans la colonne Date]\n" \
+         "Article: [Ce qui est écrit dans la colonne Article]\n" \
+         "Prix: [Ce qui est écrit dans la colonne Prix]\n" \
+         "Quantite: [Ce qui est écrit dans la colonne Quantite]\n"
          
-    p2 = "CONSIGNES D'ALIGNEMENT ABSOLU :\n" \
-         "1. Compte et numérise CHAQUE ligne du tableau physique de l'image. " \
-         "Si une ligne en bas du document est coupée, tronquée ou s'il lui manque " \
-         "ses bordures, TU DOIS TOUT DE MÊME LA CRÉER et extraire le texte visible.\n" \
-         "2. INTERDICTION STRICTE de fusionner, de combiner ou de mélanger les données " \
-         "de deux lignes différentes. Une ligne manuscrite/imprimée = Une ligne Markdown.\n" \
-         "3. Si une information ou une colonne est illisible ou manquante sur une ligne " \
-         "(notamment la ligne coupée du bas), laisse la case vide entre les séparateurs '|'. " \
-         "Ne décale jamais les données d'une colonne vers une autre.\n" \
-         "Ne fais aucun commentaire, commence directement par le tableau Markdown."
+    p2 = "CONSIGNES ABSOLUES DE NUMÉRISATION :\n" \
+         "1. Tu ne dois RIEN inventer, RIEN corriger, et ne JAMAIS combiner les données de deux lignes distinctes.\n" \
+         "2. S'il s'agit de la dernière ligne en bas et qu'elle est coupée ou qu'il manque des informations " \
+         "(comme le prix ou la quantité), écris la balise correspondante mais laisse le champ totalement VIDE.\n" \
+         "3. Si une colonne est vide sur le cahier à n'importe quel niveau, laisse le champ VIDE après les deux-points. " \
+         "N'y déplace jamais la donnée d'une autre colonne.\n" \
+         "Ne fais aucune introduction, commence directement par la première ligne sous le format demandé."
          
     prompt = p1 + p2
 
@@ -91,22 +93,36 @@ def extract_data(images):
                 st.error(f"❌ Document invalide : `{img_file.name}`")
                 continue
             
+            # Découpage du bloc de texte par ligne
             lines = raw_text.split("\n")
+            current_row = None
+            
             for line in lines:
                 line = line.strip()
-                if not line or "Date" in line or "---" in line:
+                if not line:
                     continue
                 
-                if line.startswith("|") and line.endswith("|"):
-                    parts = [p.strip() for p in line.split("|")]
-                    actual_data = parts[1:-1]
-                    
-                    row = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
-                    if len(actual_data) >= 1: row["Date"] = actual_data[0]
-                    if len(actual_data) >= 2: row["Article"] = actual_data[1]
-                    if len(actual_data) >= 3: row["Prix"] = actual_data[2]
-                    if len(actual_data) >= 4: row["Quantite"] = actual_data[3]
-                    all_data.append(row)
+                # Détection d'un nouveau bloc de ligne physique
+                if line.upper().startswith("LIGNE:"):
+                    if current_row is not None:
+                        all_data.append(current_row)
+                    current_row = {"Date": "", "Article": "", "Prix": "", "Quantite": ""}
+                    continue
+                
+                # Extraction sécurisée par clé, aucun décalage possible
+                if current_row is not None:
+                    if line.lower().startswith("date:"):
+                        current_row["Date"] = line[5:].strip()
+                    elif line.lower().startswith("article:"):
+                        current_row["Article"] = line[8:].strip()
+                    elif line.lower().startswith("prix:"):
+                        current_row["Prix"] = line[5:].strip()
+                    elif line.lower().startswith("quantite:"):
+                        current_row["Quantite"] = line[9:].strip()
+            
+            # Ajout de la dernière ligne traitée
+            if current_row is not None:
+                all_data.append(current_row)
                     
         except Exception as e:
             st.error(f"Erreur traitement de {img_file.name} : {e}")
